@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, TrendingUp } from "lucide-react";
 import { RadialBarChart, RadialBar, PolarAngleAxis, ResponsiveContainer } from "recharts";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = "";
 
 export default function YieldPage() {
   const router = useRouter();

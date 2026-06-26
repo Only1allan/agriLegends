@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Sprout, Leaf, Check } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = "";
 
 const STAGES = [
   { name: "Emergence", days: "0-21", desc: "Seedlings emerge from soil", tip: "Keep soil moist, control weeds" },

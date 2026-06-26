@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, BarChart3, AlertTriangle, Leaf } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = "";
 
 export default function HealthPage() {
   const [obs, setObs] = useState<any[]>([]);

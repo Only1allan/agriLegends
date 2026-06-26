@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Sprout, RefreshCw, Leaf, TrendingUp, Thermometer, ShieldCheck, MessageCircle, Calendar, BarChart3, CloudSun, ChevronRight, Zap, Mountain, AlertTriangle, Bug, Camera, User } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = "";
 
 export default function DashboardPage() {
   const router = useRouter();

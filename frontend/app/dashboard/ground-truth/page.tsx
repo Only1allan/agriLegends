@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Camera, Upload, Bug, Calendar, TrendingUp, MessageSquare, Clock, Sprout, Shield, Check } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = "";
 
 const BG = "#0d1f15";
 const SURFACE = "#13291e";

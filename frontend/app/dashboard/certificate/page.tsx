@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ExternalLink, Sprout, CheckCircle, Calendar } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = "";
 
 interface Cert { farmerId: string; plotId: string; plotName: string; variety: string; seasonDay: number; recommendationAction: string; recommendationCause: string; recommendationNarrative: string; recommendationDate: string; stressEventsResolved: number; currentYieldForecastKg: number; masumiTxHash: string | null; verified: boolean; }
 

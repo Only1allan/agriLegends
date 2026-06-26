@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react";
 import { Sprout, ArrowRight, Check, ChevronLeft, Database, MapPin, Crosshair, Loader2, Camera, Upload, Bug } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = "";
 
 const BG = "#0d1f15";
 const SURFACE = "#13291e";

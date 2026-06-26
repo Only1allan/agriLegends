@@ -71,6 +71,11 @@ async def get_observations(plot_id: str, days: int = Query(30, ge=1, le=365)) ->
 @router.get("/{plot_id}/certificate")
 @router.get("/{plot_id}/certificate/{recommendation_date}")
 async def get_certificate(plot_id: str, recommendation_date: str | None = None) -> CertificateResponse:
+    try:
+        from agents.gdd import sync_growth_stage
+        await sync_growth_stage(plot_id)
+    except Exception:
+        pass
     target_date = f"date($rec_date)" if recommendation_date else "date()"
 
     result = query_one(
@@ -80,11 +85,14 @@ async def get_certificate(plot_id: str, recommendation_date: str | None = None) 
         OPTIONAL MATCH (p)-[:HAS_RECOMMENDATION]->(rec:DailyRecommendation {{date: {target_date}}})
         OPTIONAL MATCH (rec)-[:HAS_TX]->(tx:MasumiTxHash)
         OPTIONAL MATCH (p)-[:EXPERIENCED_STRESS]->(se:StressEvent)
+        OPTIONAL MATCH (p)-[:HAS_OBSERVATION]->(obs:Observation_Satellite)
         RETURN coalesce(f.farmerId, 'unknown') AS farmerId,
                p.plotId AS plotId,
                p.name AS plotName,
                p.variety AS variety,
-               p.seasonDay AS seasonDay,
+               CASE WHEN p.plantingDate IS NOT NULL
+                    THEN duration.between(p.plantingDate, date()).days
+                    ELSE p.seasonDay END AS seasonDay,
                rec.action AS recommendationAction,
                rec.cause AS recommendationCause,
                rec.narrative AS recommendationNarrative,
@@ -94,7 +102,8 @@ async def get_certificate(plot_id: str, recommendation_date: str | None = None) 
                tx.hash AS masumiTxHash,
                tx.status AS masumiStatus,
                tx.inputHash AS inputHash,
-               tx.outputHash AS outputHash
+               tx.outputHash AS outputHash,
+               count(DISTINCT obs) AS monitoringDays
         """,
         {"pid": plot_id, "rec_date": recommendation_date or ""},
     )
@@ -125,7 +134,7 @@ async def get_certificate(plot_id: str, recommendation_date: str | None = None) 
         recommendationCause=result["recommendationCause"] or "",
         recommendationNarrative=result["recommendationNarrative"] or "",
         recommendationDate=result["recommendationDate"] or "",
-        monitoringDays=0,
+        monitoringDays=result.get("monitoringDays") or 0,
         stressEventsResolved=result["stressEventsResolved"] or 0,
         currentYieldForecastKg=result["currentYieldForecastKg"] or 0,
         masumiTxHash=tx_hash,
@@ -192,10 +201,20 @@ async def get_weather(plot_id: str, days: int = Query(14, ge=1, le=365)) -> list
 
 @router.get("/{plot_id}/growth")
 async def get_growth_stage(plot_id: str):
+    try:
+        from agents.gdd import sync_growth_stage
+        await sync_growth_stage(plot_id)
+    except Exception:
+        pass
+
     result = query_one(
         """
         MATCH (p:Plot {plotId: $pid})-[:AT_STAGE]->(gs:GrowthStage)
-        RETURN gs.name AS stage, p.seasonDay AS day,
+        WITH p, gs,
+             CASE WHEN p.plantingDate IS NOT NULL
+                  THEN duration.between(p.plantingDate, date()).days
+                  ELSE p.seasonDay END AS computedDay
+        RETURN gs.name AS stage, computedDay AS day,
                gs.dayStart AS stageStart, gs.dayEnd AS stageEnd
         """,
         {"pid": plot_id},

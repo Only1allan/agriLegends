@@ -10,12 +10,16 @@ export default function DashboardPage() {
   const router = useRouter();
   const [farmer, setFarmer] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [running, setRunning] = useState(false);
 
   useEffect(() => {
     const fid = localStorage.getItem("farmerId");
     if (!fid) { router.push("/onboarding"); return; }
-    fetch(`${API}/api/farmer/${fid}`).then(r => r.json()).then(d => { setFarmer(d); setLoading(false); }).catch(() => setLoading(false));
+    fetch(`${API}/api/farmer/${fid}`)
+      .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
+      .then(d => { setFarmer(d); setLoading(false); })
+      .catch(() => { setError(true); setLoading(false); });
   }, []);
 
   const diagnose = useCallback(async () => {
@@ -33,6 +37,18 @@ export default function DashboardPage() {
   if (loading) return (
     <div style={{ display: "flex", minHeight: "100dvh", alignItems: "center", justifyContent: "center", background: "#0d1f15" }}>
       <Sprout size={36} color="#4ade80" style={{ opacity: 0.3 }} />
+    </div>
+  );
+
+  if (error) return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100dvh", alignItems: "center", justifyContent: "center", background: "#0d1f15", padding: 24, textAlign: "center" }}>
+      <AlertTriangle size={40} color="#dc2626" style={{ marginBottom: 12 }} />
+      <p style={{ fontSize: 16, fontWeight: 600, color: "#e8e6dc", margin: "0 0 4px" }}>Connection lost</p>
+      <p style={{ fontSize: 13, color: "#8b9e8e", margin: "0 0 20px" }}>Could not reach the backend. Check your connection and try again.</p>
+      <button onClick={() => { setLoading(true); setError(false); const fid = localStorage.getItem("farmerId"); if (fid) fetch(`${API}/api/farmer/${fid}`).then(r => r.json()).then(d => { setFarmer(d); setLoading(false); }).catch(() => { setError(true); setLoading(false); }); }}
+        style={{ background: "linear-gradient(135deg,#4ade80,#22c55e)", color: "#0d1f15", border: "none", borderRadius: 12, padding: "10px 24px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+        Retry
+      </button>
     </div>
   );
 

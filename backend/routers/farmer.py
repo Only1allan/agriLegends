@@ -33,7 +33,7 @@ class RegisterResponse(BaseModel):
 class FarmerResponse(BaseModel):
     farmerId: str
     name: str
-    phone: str
+    phone: str | None = None
     plots: list[dict]
 
 
@@ -197,6 +197,14 @@ async def register_farmer(req: RegisterRequest) -> RegisterResponse:
 
 @router.get("/{farmer_id}")
 async def get_farmer(farmer_id: str) -> FarmerResponse:
+    from agents.gdd import sync_growth_stage
+    try:
+        plots = query("MATCH (f:Farmer {farmerId: $fid})-[:OWNS]->(p:Plot) RETURN p.plotId AS plotId", {"fid": farmer_id})
+        for plot in plots:
+            await sync_growth_stage(plot["plotId"])
+    except Exception:
+        pass
+
     result = query_one(
         """
         MATCH (f:Farmer {farmerId: $fid})
@@ -206,7 +214,10 @@ async def get_farmer(farmer_id: str) -> FarmerResponse:
         RETURN f.farmerId AS farmerId, f.name AS name, f.phone AS phone,
                collect({
                    plotId: p.plotId, name: p.name, variety: p.variety,
-                   stage: gs.name, seasonDay: p.seasonDay,
+                   stage: gs.name,
+                   seasonDay: CASE WHEN p.plantingDate IS NOT NULL
+                              THEN duration.between(p.plantingDate, date()).days
+                              ELSE p.seasonDay END,
                    forecastedYieldKg: p.forecastedYieldKg,
                    todayRecommendation: rec.narrative
                }) AS plots

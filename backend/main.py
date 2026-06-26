@@ -46,3 +46,36 @@ app.include_router(ground_truth.router, prefix="/api/farmer", tags=["ground-trut
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "farmwise-api"}
+
+
+@app.get("/api/health/freshness")
+async def health_freshness():
+    from services.neo4j import query
+    try:
+        latest_obs = query(
+            """
+            MATCH (:Observation_Satellite)-[:OCCURRED_ON]->(d:TimeDay)
+            RETURN toString(max(d.date)) AS lastObservationDate,
+                   duration.between(max(d.date), date()).days AS daysStale
+            """
+        )
+        latest_rec = query(
+            """
+            MATCH (rec:DailyRecommendation)
+            RETURN toString(max(rec.date)) AS lastRecommendationDate,
+                   duration.between(max(rec.date), date()).days AS daysStale
+            """
+        )
+        plot_count = query("MATCH (p:Plot) RETURN count(p) AS count")
+        farmer_count = query("MATCH (f:Farmer) RETURN count(f) AS count")
+        return {
+            "status": "ok",
+            "plots": plot_count[0]["count"] if plot_count else 0,
+            "farmers": farmer_count[0]["count"] if farmer_count else 0,
+            "lastObservationDate": latest_obs[0]["lastObservationDate"] if latest_obs else None,
+            "observationDaysStale": latest_obs[0]["daysStale"] if latest_obs else None,
+            "lastRecommendationDate": latest_rec[0]["lastRecommendationDate"] if latest_rec else None,
+            "recommendationDaysStale": latest_rec[0]["daysStale"] if latest_rec else None,
+        }
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}

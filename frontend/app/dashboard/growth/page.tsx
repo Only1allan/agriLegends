@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Sprout, Leaf, Check } from "lucide-react";
+import { ChevronLeft, Sprout, Leaf, Check, AlertTriangle } from "lucide-react";
 
 const API = "";
 
@@ -26,18 +26,29 @@ export default function GrowthPage() {
   const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     const fid = localStorage.getItem("farmerId");
     if (!fid) { router.push("/onboarding"); return; }
     const pid = localStorage.getItem("plotId");
-    const go = (p: string) => fetch(`${API}/api/plot/${p}/growth`).then(r => r.json()).then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false));
+    const go = (p: string) => fetch(`${API}/api/plot/${p}/growth`)
+      .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => { setError(true); setLoading(false); });
     if (pid) { go(pid); return; }
     fetch(`${API}/api/farmer/${fid}`).then(r => r.json()).then(f => { const p = f.plots?.[0]?.plotId; if (p) { localStorage.setItem("plotId", p); go(p); } }).catch(() => setLoading(false));
   }, []);
 
   if (loading) return <div style={{ display: "flex", minHeight: "100dvh", alignItems: "center", justifyContent: "center", background: BG }}>
     <Sprout size={40} color={GREEN} style={{ opacity: 0.5 }} className="anim-up" /></div>;
+
+  if (error) return <div style={{ display: "flex", flexDirection: "column", minHeight: "100dvh", alignItems: "center", justifyContent: "center", background: BG, padding: 24, textAlign: "center" }}>
+    <AlertTriangle size={36} color="#dc2626" style={{ marginBottom: 10 }} />
+    <p style={{ fontSize: 15, fontWeight: 600, color: TEXT, margin: "0 0 4px" }}>Failed to load growth data</p>
+    <p style={{ fontSize: 13, color: TEXT_SEC, margin: "0 0 16px" }}>Check your connection and try again</p>
+    <button onClick={() => window.location.reload()} style={{ background: GREEN, color: BG, border: "none", borderRadius: 10, padding: "8px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Retry</button>
+  </div>;
 
   const idx = Math.max(0, STAGES.findIndex(s => s.name === data?.stage));
   const cur = STAGES[idx];

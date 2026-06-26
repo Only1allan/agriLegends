@@ -19,7 +19,7 @@ async def daily_ingestion_cycle():
     )
     logger.info("Daily ingestion cycle: %d plots found", len(plots))
 
-    for plot in plots:
+    for i, plot in enumerate(plots):
         plot_id = plot["plotId"]
         try:
             if plot.get("agromonitoringPolygonId"):
@@ -35,6 +35,9 @@ async def daily_ingestion_cycle():
                 await detect_stress(plot_id)
                 await run_diagnostic(plot_id)
                 logger.info("Ingestion cycle complete for plot %s", plot_id)
+
+                if i < len(plots) - 1:
+                    await asyncio.sleep(15)
         except Exception:
             logger.exception("Ingestion cycle failed for plot %s", plot_id)
             continue

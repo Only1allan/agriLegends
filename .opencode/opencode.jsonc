@@ -6,7 +6,7 @@
       "type": "local",
       "command": ["npx", "-y", "@21st-dev/magic@latest"],
       "environment": {
-        "API_KEY": "<REDACTED_21ST_API_KEY>"
+        "API_KEY": "${21ST_DEV_API_KEY}"
       },
       "timeout": 5000
     }

@@ -9,8 +9,8 @@
 
 set -e
 
-BLOCKFROST_ID="<REDACTED_BLOCKFROST_ID>"
-ADDRESS="<REDACTED_TESTNET_ADDRESS>"
+BLOCKFROST_ID="<your-blockfrost-preprod-project-id>"
+ADDRESS="<your-testnet-address>"
 FAUCET_URL="https://docs.cardano.org/cardano-testnet/tools/faucet"
 
 check_balance() {

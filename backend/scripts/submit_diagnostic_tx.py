@@ -15,9 +15,9 @@ from pycardano import (
     BlockFrostChainContext, HDWallet,
 )
 
-BLOCKFROST_ID = "<REDACTED_BLOCKFROST_ID>"
-MNEMONIC = "<REDACTED_MNEMONIC>"
-EXPECTED_ADDRESS = "<REDACTED_TESTNET_ADDRESS>"
+BLOCKFROST_ID = "<your-blockfrost-preprod-project-id>"
+MNEMONIC = "<your-24-word-mnemonic>"
+EXPECTED_ADDRESS = "<expected-address>"
 
 context = BlockFrostChainContext(BLOCKFROST_ID, network=Network.TESTNET)
 wallet = HDWallet.from_mnemonic(MNEMONIC)

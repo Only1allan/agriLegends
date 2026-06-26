@@ -229,7 +229,7 @@ export default function OnboardingPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingTop: 8 }}>
             <div>
               <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, letterSpacing: "-0.02em", margin: "0 0 4px" }}>Register Your Farm</h1>
-              <p style={{ fontSize: 14, color: TEXT_SEC, lineHeight: 1.5 }}>Enter your phone number. We'll send a verification code.</p>
+               <p style={{ fontSize: 14, color: TEXT_SEC, lineHeight: 1.5 }}>Enter your phone number to register. No real SMS is sent in this demo.</p>
             </div>
 
             <div style={{ background: SURFACE, borderRadius: 16, padding: 20, border: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 14 }}>
@@ -252,9 +252,15 @@ export default function OnboardingPage() {
                 </button>
               ) : (
                 <>
+                  <div style={{ background: "rgba(96, 165, 250, 0.08)", borderRadius: 10, padding: 12, border: `1px solid rgba(96, 165, 250, 0.2)`, marginBottom: 4 }}>
+                    <p style={{ fontSize: 13, color: BLUE, margin: 0, lineHeight: 1.5 }}>
+                      <strong>Demo mode:</strong> No real SMS is sent. Choose any registration code
+                      (e.g. <strong>123456</strong>) and enter it below to continue.
+                    </p>
+                  </div>
                   <div>
-                    <label style={labelStyle}>Enter Code</label>
-                    <input type="text" value={otp} onChange={e => setOtp(e.target.value)}
+                    <label style={labelStyle}>Enter Your Code</label>
+                    <input type="text" value={otp} onChange={e => setOtp(e.target.value)} placeholder="e.g. 123456"
                       style={{ ...inputStyle, fontSize: 24, fontWeight: 600, color: GREEN, textAlign: "center", letterSpacing: "0.4em", fontFamily: "monospace" }} />
                   </div>
                   <button onClick={async () => {

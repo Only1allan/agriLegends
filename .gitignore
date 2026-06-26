@@ -1,0 +1,35 @@
+# --- Python (backend) ---
+backend/venv/
+backend/.env
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/static/audio/*
+!backend/static/audio/.gitkeep
+backend/.pytest_cache/
+
+# --- Node (frontend) ---
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/public/sw*
+frontend/public/swe-worker*
+frontend/**/*.tsbuildinfo
+
+# --- Live data ---
+live-data/
+
+# --- Secrets & credentials ---
+Neo4j-*.txt
+docker/masumi/.env
+docker/masumi/.env.backup
+
+# --- Dev tooling ---
+.opencode/node_modules/
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

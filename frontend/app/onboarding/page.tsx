@@ -1,475 +1,435 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Sprout, ArrowRight, Check, ChevronLeft, Database, MapPin, Crosshair, Loader2, Camera, Upload, Bug } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-const API = "";
+const KENYA_COUNTY_COORDS: Record<string, { lat: number; lng: number }> = {
+  "Nairobi": { lat: -1.2921, lng: 36.8219 },
+  "Nyandarua": { lat: -0.1833, lng: 36.4333 },
+  "Nakuru": { lat: -0.3031, lng: 36.0800 },
+  "Kiambu": { lat: -1.1714, lng: 36.8356 },
+  "Meru": { lat: 0.0463, lng: 37.6559 },
+  "Uasin Gishu": { lat: 0.5143, lng: 35.2698 },
+  "Nyeri": { lat: -0.4273, lng: 36.9548 },
+  "Murang'a": { lat: -0.7351, lng: 37.1588 },
+  "Bomet": { lat: -0.7822, lng: 35.3378 },
+  "Kirinyaga": { lat: -0.4983, lng: 37.2838 },
+  "Bungoma": { lat: 0.5695, lng: 34.5584 },
+  "Kakamega": { lat: 0.2827, lng: 34.7519 },
+  "Trans Nzoia": { lat: 1.0167, lng: 35.0000 },
+  "Nandi": { lat: 0.1767, lng: 35.1167 },
+  "Elgeyo Marakwet": { lat: 0.5000, lng: 35.5000 },
+  "Kericho": { lat: -0.3679, lng: 35.2860 },
+  "Laikipia": { lat: 0.3600, lng: 36.7800 },
+  "Machakos": { lat: -1.5177, lng: 37.2634 },
+  "Makueni": { lat: -1.8000, lng: 37.6167 },
+  "Embu": { lat: -0.5333, lng: 37.4500 },
+  "Kisii": { lat: -0.6817, lng: 34.7667 },
+  "Kisumu": { lat: -0.1000, lng: 34.7500 },
+  "Homa Bay": { lat: -0.5273, lng: 34.4571 },
+  "Migori": { lat: -1.0634, lng: 34.4731 },
+  "Siaya": { lat: 0.0600, lng: 34.2867 },
+  "Busia": { lat: 0.4633, lng: 34.1050 },
+  "Kilifi": { lat: -3.6300, lng: 39.8500 },
+  "Kwale": { lat: -4.1767, lng: 39.4500 },
+  "Mombasa": { lat: -4.0500, lng: 39.6667 },
+  "Taita Taveta": { lat: -3.4167, lng: 38.3333 },
+  "Kitui": { lat: -1.3667, lng: 38.0167 },
+  "Tharaka Nithi": { lat: -0.3000, lng: 37.9167 },
+  "Garissa": { lat: -0.4500, lng: 39.6500 },
+  "Mandera": { lat: 3.9333, lng: 41.8667 },
+  "Wajir": { lat: 1.7500, lng: 40.0667 },
+  "Isiolo": { lat: 0.3500, lng: 37.5833 },
+  "Marsabit": { lat: 2.3333, lng: 37.9833 },
+  "Turkana": { lat: 3.1167, lng: 35.6000 },
+  "Samburu": { lat: 1.1667, lng: 36.6667 },
+  "Baringo": { lat: 0.4667, lng: 35.9667 },
+  "West Pokot": { lat: 1.2500, lng: 35.0833 },
+  "Vihiga": { lat: 0.0500, lng: 34.7333 },
+  "Nyamira": { lat: -0.6167, lng: 34.9833 },
+  "Lamu": { lat: -2.2667, lng: 40.9000 },
+  "Tana River": { lat: -1.5000, lng: 40.0333 },
+};
 
-const BG = "#0d1f15";
-const SURFACE = "#13291e";
-const BORDER = "#1e3a2a";
-const TEXT = "#e8e6dc";
-const TEXT_SEC = "#8b9e8e";
-const GREEN = "#4ade80";
-const GREEN_DIM = "#22c55e";
-const GOLD = "#d4a844";
-const RED = "#f87171";
-const BLUE = "#60a5fa";
 
-const COUNTIES = ["Nyandarua", "Nakuru", "Kiambu", "Meru", "Nyeri", "Muranga", "Laikipia", "Bomet", "Uasin Gishu"];
-const VARIETIES = ["Shangi", "Kenya Mpya", "Dutch Robjin", "Tigoni", "Asante"];
+const SOIL_TYPES = [
+  "Clay", "Clay Loam", "Sandy Loam", "Silt Loam", "Loam",
+  "Sandy Clay Loam", "Silty Clay", "Volcanic",
+];
 
-const KNOWN_PESTS = [
-  { id: "late_blight", label: "Late Blight", emoji: "🟤" },
-  { id: "early_blight", label: "Early Blight", emoji: "🟡" },
-  { id: "bacterial_wilt", label: "Bacterial Wilt", emoji: "🦠" },
-  { id: "aphids", label: "Aphids", emoji: "🟢" },
-  { id: "tuber_moth", label: "Tuber Moth", emoji: "🦋" },
+const KENYA_COUNTIES = Object.keys(KENYA_COUNTY_COORDS);
+
+const POTATO_VARIETIES = ["Shangi", "Dutch Robjn", "Kenya Mpya", "Asante", "Tigoni", "Purple Gold"];
+
+const GROWTH_STAGES = [
+  { value: "emergence", label: "Emergence (0-21 days)", daysOffset: 10 },
+  { value: "tuber_initiation", label: "Tuber Initiation (22-45 days)", daysOffset: 33 },
+  { value: "tuber_bulking", label: "Tuber Bulking (46-80 days)", daysOffset: 63 },
+  { value: "maturation", label: "Maturation (81-110 days)", daysOffset: 95 },
+];
+
+const STEPS = [
+  { id: 1, title: "Karibu FarmWise", subtitle: "Welcome" },
+  { id: 2, title: "Your Farm Location", subtitle: "Location" },
+  { id: 3, title: "Farm Details", subtitle: "Details" },
+  { id: 4, title: "Your Crop", subtitle: "Crop" },
+  { id: 5, title: "Growth Stage", subtitle: "Growth" },
+  { id: 6, title: "Contact Preference", subtitle: "Contact" },
+  { id: 7, title: "Setup Complete", subtitle: "Summary" },
 ];
 
 export default function OnboardingPage() {
-  const [step, setStep] = useState(0);
-  const [phone, setPhone] = useState("+254");
-  const [otp, setOtp] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [farmerId, setFarmerId] = useState("");
-  const [name, setName] = useState("");
+  const router = useRouter();
+  const [step, setStep] = useState(1);
+  const [form, setForm] = useState({
+    name: "",
+    county: "Nyandarua",
+    plotName: "",
+    areaHa: 1.0,
+    soilType: "Clay Loam",
+    variety: "Shangi",
+    plantingDate: new Date().toISOString().split("T")[0],
+    growthStage: "emergence" as string,
+    channel: "whatsapp_text" as string,
+    language: "sw" as string,
+  });
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [setupSteps, setSetupSteps] = useState<string[]>([]);
 
-  const [county, setCounty] = useState("Nyandarua");
-  const [plotName, setPlotName] = useState("");
-  const [acres, setAcres] = useState("1.5");
-  const [variety, setVariety] = useState("Shangi");
-  const [plantingDate, setPlantingDate] = useState(
-    () => new Date(Date.now() - 60 * 86400000).toISOString().split("T")[0],
-  );
-  const [latitude, setLatitude] = useState("-0.1833");
-  const [longitude, setLongitude] = useState("36.4333");
-  const [locating, setLocating] = useState(false);
+  useEffect(() => {
+    const t = localStorage.getItem("farmwise_token");
+    const n = localStorage.getItem("farmwise_name");
+    if (!t) router.push("/login");
+    setForm((prev) => ({ ...prev, name: n || prev.name }));
+  }, [router]);
 
-  const [photoBase64, setPhotoBase64] = useState("");
-  const [photoPreview, setPhotoPreview] = useState("");
-  const [farmHistory, setFarmHistory] = useState("");
-  const [docBase64, setDocBase64] = useState("");
-  const [docName, setDocName] = useState("");
-  const [knownPests, setKnownPests] = useState<string[]>([]);
+  useEffect(() => {
+    const stage = GROWTH_STAGES.find((s) => s.value === form.growthStage);
+    if (stage) {
+      const estimatedDate = new Date();
+      estimatedDate.setDate(estimatedDate.getDate() - stage.daysOffset);
+      update("plantingDate", estimatedDate.toISOString().split("T")[0]);
+    }
+  }, [form.growthStage]);
 
-  const [textEnabled, setTextEnabled] = useState(true);
-  const [audioEnabled, setAudioEnabled] = useState(false);
-  const [language, setLanguage] = useState("en");
-  const [error, setError] = useState("");
-  const [status, setStatus] = useState("");
+  const update = (field: string, value: string | number) =>
+    setForm((prev) => ({ ...prev, [field]: value }));
 
-  const getLocation = () => {
-    if (!navigator.geolocation) { setError("Geolocation not supported"); return; }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      pos => { setLatitude(pos.coords.latitude.toFixed(6)); setLongitude(pos.coords.longitude.toFixed(6)); setLocating(false); },
-      () => { setError("Could not get location"); setLocating(false); },
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
-  };
-
-  const toBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve((reader.result as string).split(",")[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const handlePhotoSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleComplete = async () => {
+    setLoading(true);
+    setErrorMsg("");
+    setSetupSteps(["Creating your plot..."]);
+    const token = localStorage.getItem("farmwise_token");
+    if (!token) {
+      setErrorMsg("Session expired. Please log in again.");
+      setLoading(false);
+      setTimeout(() => router.push("/login"), 1500);
+      return;
+    }
+    const coords = KENYA_COUNTY_COORDS[form.county] || { lat: -1.2921, lng: 36.8219 };
     try {
-      const b64 = await toBase64(file);
-      setPhotoBase64(b64);
-      setPhotoPreview(URL.createObjectURL(file));
-    } catch {
-      setError("Could not read photo");
-    }
-  }, []);
-
-  const handleDocSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const b64 = await toBase64(file);
-      setDocBase64(b64);
-      setDocName(file.name);
-    } catch {
-      setError("Could not read document");
-    }
-  }, []);
-
-  const togglePest = (id: string) => {
-    setKnownPests(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]);
-  };
-
-  const submitGroundTruth = async (fid: string) => {
-    const submissions: Promise<any>[] = [];
-    if (photoBase64) {
-      submissions.push(
-        fetch(`${API}/api/farmer/${fid}/ground-truth`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "photo", text: farmHistory || "Farm photo during registration", imageBase64: photoBase64 }),
-        })
-      );
-    }
-    if (farmHistory.trim()) {
-      submissions.push(
-        fetch(`${API}/api/farmer/${fid}/ground-truth`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "farmer_observation", text: farmHistory }),
-        })
-      );
-    }
-    if (docBase64) {
-      submissions.push(
-        fetch(`${API}/api/farmer/${fid}/ground-truth`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "document", text: docName, imageBase64: docBase64 }),
-        })
-      );
-    }
-    if (knownPests.length > 0) {
-      submissions.push(
-        fetch(`${API}/api/farmer/${fid}/ground-truth`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "known_pests", text: knownPests.join(", "), metadata: { pests: knownPests } }),
-        })
-      );
-    }
-    if (submissions.length > 0) {
-      try { await Promise.all(submissions); } catch {}
-    }
-  };
-
-  const register = async () => {
-    setError("");
-    setStatus("Fetching live soil and weather data...");
-    try {
-      const r = await fetch(`${API}/api/farmer/register`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+      const plotRes = await fetch("/api/plots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          farmerId: farmerId || undefined, name, county,
-          plotName: plotName || `Shamba ${county}`, acres: parseFloat(acres),
-          variety, plantingDate, latitude: parseFloat(latitude), longitude: parseFloat(longitude),
-          channels: [...(textEnabled ? ["whatsapp_text"] : []), ...(audioEnabled ? ["whatsapp_audio"] : [])],
-          language,
+          name: form.plotName || "My Shamba",
+          county: form.county,
+          areaHa: form.areaHa,
+          soilType: form.soilType,
+          location: coords,
         }),
       });
-      const data = await r.json();
-      if (!data.plotId) { setError("Registration failed"); return; }
-      let fid = data.farmerId;
-      if (!fid || fid === "undefined") {
-        const id = `farmer-${Date.now()}`;
-        localStorage.setItem("farmerId", id);
-        await fetch(`${API}/api/farmer/register`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            farmerId: id, name, county,
-            plotName: plotName || `Shamba ${county}`, acres: parseFloat(acres),
-            variety, plantingDate, latitude: parseFloat(latitude), longitude: parseFloat(longitude),
-            channels: [...(textEnabled ? ["whatsapp_text"] : []), ...(audioEnabled ? ["whatsapp_audio"] : [])],
-            language,
-          }),
-        });
-        localStorage.setItem("farmerId", id);
-        fid = id;
-      } else {
-        localStorage.setItem("farmerId", fid);
+      if (!plotRes.ok) {
+        const errData = await plotRes.json().catch(() => ({}));
+        throw new Error(errData.detail || `Plot creation failed (${plotRes.status})`);
       }
-      const pid = data.plotId;
-      if (pid) localStorage.setItem("plotId", pid);
-      await submitGroundTruth(fid);
-      setStatus(data.message || "Registration complete!");
-      setStep(4);
-    } catch {
-      setError("Registration failed. Check backend connection.");
-      setStatus("");
+      const plotData = await plotRes.json();
+      setSetupSteps(["Creating your plot... done", "Fetching soil data from iSDAsoil..."]);
+
+      setSetupSteps((prev) => [...prev, "Creating season and ingesting satellite data..."]);
+      const seasonRes = await fetch(`/api/plots/${plotData.plotId}/seasons`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          plantingDate: form.plantingDate,
+          varietyName: form.variety,
+          growthStage: form.growthStage,
+        }),
+      });
+      if (!seasonRes.ok) {
+        const errData = await seasonRes.json().catch(() => ({}));
+        throw new Error(errData.detail || `Season creation failed (${seasonRes.status})`);
+      }
+      const seasonData = await seasonRes.json();
+      const ingestion = seasonData.ingestion || {};
+      setSetupSteps([
+        "Creating your plot... done",
+        `Soil data: ${ingestion.soil || "pending"}`,
+        `Satellite data: ${ingestion.satellite || "pending"}`,
+        `Weather data: ${ingestion.weather || "pending"}`,
+        `Health analysis: ${ingestion.diagnostic || "pending"}`,
+        "Setup complete!",
+      ]);
+      await new Promise((r) => setTimeout(r, 800));
+
+      router.push("/dashboard");
+    } catch (err: any) {
+      setErrorMsg(err.message || "Setup failed. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const inputStyle: React.CSSProperties = {
-    width: "100%", background: "rgba(255,255,255,0.03)", border: `1px solid ${BORDER}`, borderRadius: 12,
-    padding: "14px", fontSize: 16, color: TEXT, outline: "none", fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box"
-  };
-  const labelStyle: React.CSSProperties = {
-    fontSize: 11, fontWeight: 600, color: TEXT_SEC, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 6
-  };
-  const btnStyle: React.CSSProperties = {
-    background: "linear-gradient(135deg, #4ade80, #22c55e)", border: "none", borderRadius: 14, padding: "14px",
-    fontSize: 15, fontWeight: 700, color: "#0d1f15", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, letterSpacing: "-0.01em"
-  };
+  const progress = (step / 7) * 100;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100dvh", background: BG, color: TEXT }}>
-      <header style={{ padding: "14px 18px 10px", paddingTop: "calc(14px + var(--safe-top))", display: "flex", alignItems: "center", gap: 12 }}>
-        {step > 0 && step < 4 && (
-          <button onClick={() => setStep(step - 1)} style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 10, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-            <ChevronLeft size={18} color={TEXT} />
-          </button>
-        )}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Sprout size={20} color={GREEN} />
-          <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em" }}>FarmWise</span>
+    <div className="min-h-dvh bg-soil-900 p-4">
+      <div className="max-w-lg mx-auto">
+        {/* Progress bar */}
+        <div className="h-1 bg-soil-700 rounded-full mb-8 mt-4">
+          <div
+            className="h-full bg-canopy-500 rounded-full transition-all duration-500"
+            style={{ width: `${progress}%` }}
+          />
         </div>
-      </header>
 
-      <div style={{ display: "flex", gap: 4, padding: "0 20px", marginBottom: 20 }}>
-        {[0, 1, 2, 3, 4].map(i => (
-          <div key={i} style={{ height: 3, flex: 1, borderRadius: 2, background: i <= step ? GREEN : BORDER, transition: "background 0.3s" }} />
-        ))}
-      </div>
+        <div className="mb-6">
+          <p className="text-muted text-xs uppercase tracking-widest">
+            Step {step}/7
+          </p>
+          <h2 className="text-2xl font-display font-bold text-cream mt-1">
+            {STEPS[step - 1].title}
+          </h2>
+        </div>
 
-      <main style={{ flex: 1, padding: "0 20px 16px", maxWidth: 400, margin: "0 auto", width: "100%" }}>
-
-        {step === 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingTop: 8 }}>
-            <div>
-              <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, letterSpacing: "-0.02em", margin: "0 0 4px" }}>Register Your Farm</h1>
-               <p style={{ fontSize: 14, color: TEXT_SEC, lineHeight: 1.5 }}>Enter your phone number to register. No real SMS is sent in this demo.</p>
-            </div>
-
-            <div style={{ background: SURFACE, borderRadius: 16, padding: 20, border: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={labelStyle}>Phone Number</label>
-                <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} style={inputStyle} />
-              </div>
-              <div>
-                <label style={labelStyle}>Your Name</label>
-                <input type="text" value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
-              </div>
-              {!otpSent ? (
-                <button onClick={async () => {
-                  try {
-                    const r = await fetch(`${API}/api/auth/send-otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone }) });
-                    if (r.ok) setOtpSent(true);
-                  } catch { setError("Could not send OTP"); }
-                }} style={btnStyle}>
-                  Send Verification Code
-                </button>
-              ) : (
-                <>
-                  <div style={{ background: "rgba(96, 165, 250, 0.08)", borderRadius: 10, padding: 12, border: `1px solid rgba(96, 165, 250, 0.2)`, marginBottom: 4 }}>
-                    <p style={{ fontSize: 13, color: BLUE, margin: 0, lineHeight: 1.5 }}>
-                      <strong>Demo mode:</strong> No real SMS is sent. Choose any registration code
-                      (e.g. <strong>123456</strong>) and enter it below to continue.
-                    </p>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Enter Your Code</label>
-                    <input type="text" value={otp} onChange={e => setOtp(e.target.value)} placeholder="e.g. 123456"
-                      style={{ ...inputStyle, fontSize: 24, fontWeight: 600, color: GREEN, textAlign: "center", letterSpacing: "0.4em", fontFamily: "monospace" }} />
-                  </div>
-                  <button onClick={async () => {
-                    try {
-                      const r = await fetch(`${API}/api/auth/verify-otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone, code: otp }) });
-                      const data = await r.json();
-                      setFarmerId(data.farmerId);
-                      localStorage.setItem("farmerId", data.farmerId);
-                      setStep(1);
-                    } catch { setError("Wrong code. Try again."); }
-                  }} style={btnStyle}>
-                    Verify <ArrowRight size={18} />
-                  </button>
-                </>
-              )}
-            </div>
-            {error && <p style={{ fontSize: 13, color: RED, textAlign: "center" }}>{error}</p>}
-          </div>
-        )}
-
+        {/* Step 1: Welcome */}
         {step === 1 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 18, paddingTop: 8 }}>
+          <div className="bg-soil-800 rounded-2xl border border-border p-6 space-y-4">
+            <p className="text-cream">Welcome to FarmWise, {form.name}!</p>
+            <p className="text-muted text-sm">
+              Your phone has been verified. Let&apos;s set up your farm in a few quick steps.
+            </p>
             <div>
-              <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, letterSpacing: "-0.02em", margin: "0 0 4px" }}>Your Farm Details</h1>
-              <p style={{ fontSize: 14, color: TEXT_SEC, lineHeight: 1.5 }}>Tell us about your plot so we can monitor it.</p>
+              <label className="block text-cream text-sm font-medium mb-1.5">Full Name</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => update("name", e.target.value)}
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream focus:outline-none focus:border-canopy-400"
+              />
             </div>
-
-            <div style={{ background: SURFACE, borderRadius: 16, padding: 20, border: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={labelStyle}>County</label>
-                <select value={county} onChange={e => setCounty(e.target.value)}
-                  style={{ ...inputStyle, fontSize: 15 }}>{COUNTIES.map(c => <option key={c} value={c}>{c}</option>)}</select>
-              </div>
-              <div>
-                <label style={labelStyle}>Plot Name</label>
-                <input type="text" value={plotName} onChange={e => setPlotName(e.target.value)} placeholder="Shamba ya Mlima" style={{ ...inputStyle, fontSize: 15 }} />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <label style={labelStyle}>Acres</label>
-                  <input type="number" step="0.25" value={acres} onChange={e => setAcres(e.target.value)} style={{ ...inputStyle, fontSize: 15 }} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Variety</label>
-                  <select value={variety} onChange={e => setVariety(e.target.value)}
-                    style={{ ...inputStyle, fontSize: 15 }}>{VARIETIES.map(v => <option key={v} value={v}>{v}</option>)}</select>
-                </div>
-              </div>
-              <div>
-                <label style={labelStyle}>Planting Date</label>
-                <input type="date" value={plantingDate} onChange={e => setPlantingDate(e.target.value)} style={{ ...inputStyle, fontSize: 15 }} />
-              </div>
-
-              <div style={{ padding: 14, background: "rgba(74,222,128,0.03)", borderRadius: 12, border: "1px solid rgba(74,222,128,0.1)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                  <MapPin size={16} color={GREEN} />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: GREEN, textTransform: "uppercase", letterSpacing: "0.04em" }}>Farm Location</span>
-                  <button onClick={getLocation} disabled={locating}
-                    style={{ marginLeft: "auto", background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "6px 12px", fontSize: 11, fontWeight: 600, color: GREEN, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                    {locating ? <Loader2 size={14} className="anim-slide" /> : <Crosshair size={14} />}
-                    {locating ? "Getting..." : "Use GPS"}
-                  </button>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <label style={{ fontSize: 10, color: "#5a6e5e", display: "block", marginBottom: 4 }}>Latitude</label>
-                    <input type="text" value={latitude} onChange={e => setLatitude(e.target.value)}
-                      style={{ width: "100%", background: "rgba(255,255,255,0.02)", border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 12px", fontSize: 14, fontFamily: "monospace", color: TEXT, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 10, color: "#5a6e5e", display: "block", marginBottom: 4 }}>Longitude</label>
-                    <input type="text" value={longitude} onChange={e => setLongitude(e.target.value)}
-                      style={{ width: "100%", background: "rgba(255,255,255,0.02)", border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 12px", fontSize: 14, fontFamily: "monospace", color: TEXT, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                </div>
-              </div>
-            </div>
-            <button onClick={() => setStep(2)} style={btnStyle}>
-              Continue <ArrowRight size={18} />
-            </button>
           </div>
         )}
 
+        {/* Step 2: Location */}
         {step === 2 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 18, paddingTop: 8 }}>
+          <div className="bg-soil-800 rounded-2xl border border-border p-6 space-y-4">
             <div>
-              <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", margin: "0 0 4px" }}>Farm Details Collection</h1>
-              <p style={{ fontSize: 14, color: TEXT_SEC, lineHeight: 1.5 }}>Help us understand your farm better. This helps us give you accurate advice.</p>
+              <label className="block text-cream text-sm font-medium mb-1.5">County</label>
+              <select
+                value={form.county}
+                onChange={(e) => update("county", e.target.value)}
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream focus:outline-none focus:border-canopy-400"
+              >
+                {KENYA_COUNTIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
             </div>
-
-            <div style={{ background: SURFACE, borderRadius: 16, padding: 20, border: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 6 }}><Camera size={14} color={GOLD} /> Farm Photo</label>
-                <input type="file" accept="image/*" capture="environment" onChange={handlePhotoSelect} id="farm-photo" style={{ display: "none" }} />
-                <label htmlFor="farm-photo" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", background: "rgba(212,168,68,0.06)", border: `1px dashed ${GOLD}44`, borderRadius: 12, padding: "24px 14px", cursor: "pointer", textAlign: "center" }}>
-                  <Upload size={20} color={GOLD} />
-                  <span style={{ fontSize: 13, fontWeight: 500, color: TEXT_SEC }}>
-                    {photoPreview ? "Change photo" : "Take or upload farm photo"}
-                  </span>
-                </label>
-                {photoPreview && (
-                  <div style={{ marginTop: 8, borderRadius: 10, overflow: "hidden", border: `1px solid ${BORDER}` }}>
-                    <img src={photoPreview} alt="Farm preview" style={{ width: "100%", maxHeight: 200, objectFit: "cover", display: "block" }} />
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label style={labelStyle}>Farm History</label>
-                <textarea value={farmHistory} onChange={e => setFarmHistory(e.target.value)}
-                  rows={4}
-                  placeholder="Tell us about your farm — past yields, pests you've seen, soil type, irrigation method / Tuambie kuhusu shamba lako — mavuno ya awali, wadudu uliowaona, aina ya udongo, njia ya kumwagilia"
-                  style={{ ...inputStyle, fontSize: 14, resize: "vertical", padding: "12px", lineHeight: 1.5, minHeight: 100 }} />
-              </div>
-
-              <div>
-                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 6 }}><Upload size={14} color={GOLD} /> Previous Reports (optional)</label>
-                <input type="file" accept="image/*,.pdf" onChange={handleDocSelect} id="farm-doc" style={{ display: "none" }} />
-                <label htmlFor="farm-doc" style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "rgba(212,168,68,0.06)", border: `1px dashed ${GOLD}44`, borderRadius: 12, padding: "14px", cursor: "pointer" }}>
-                  <Upload size={16} color={GOLD} />
-                  <span style={{ fontSize: 13, fontWeight: 500, color: TEXT_SEC }}>
-                    {docName ? docName : "Upload soil test or agronomist report (PDF/Image)"}
-                  </span>
-                </label>
-              </div>
-
-              <div>
-                <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 6 }}><Bug size={14} color={GOLD} /> Known Pests</label>
-                <p style={{ fontSize: 12, color: TEXT_SEC, margin: "0 0 10px" }}>Select pests you've seen on your potatoes:</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {KNOWN_PESTS.map(p => {
-                    const sel = knownPests.includes(p.id);
-                    return (
-                      <button key={p.id} onClick={() => togglePest(p.id)}
-                        style={{
-                          padding: "8px 14px", borderRadius: 20, border: sel ? `2px solid ${GREEN}` : `1px solid ${BORDER}`,
-                          background: sel ? "rgba(74,222,128,0.1)" : "transparent",
-                          color: sel ? GREEN : TEXT_SEC, fontSize: 12, fontWeight: 600,
-                          cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
-                          transition: "all 0.2s",
-                        }}>
-                        <span>{p.emoji}</span> {p.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+            <div>
+              <label className="block text-cream text-sm font-medium mb-1.5">Plot / Shamba Name</label>
+              <input
+                type="text"
+                value={form.plotName}
+                onChange={(e) => update("plotName", e.target.value)}
+                placeholder="Upper Shamba"
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream placeholder-muted focus:outline-none focus:border-canopy-400"
+              />
             </div>
-            <button onClick={() => setStep(3)} style={btnStyle}>
-              Continue <ArrowRight size={18} />
-            </button>
           </div>
         )}
 
+        {/* Step 3: Farm Details */}
         {step === 3 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 18, paddingTop: 8 }}>
+          <div className="bg-soil-800 rounded-2xl border border-border p-6 space-y-4">
             <div>
-              <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", margin: "0 0 4px" }}>How do you want your advice?</h1>
+              <label className="block text-cream text-sm font-medium mb-1.5">Area (hectares)</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                max="500"
+                value={form.areaHa}
+                onChange={(e) => update("areaHa", parseFloat(e.target.value))}
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream focus:outline-none focus:border-canopy-400"
+              />
             </div>
-            <div style={{ background: SURFACE, borderRadius: 16, padding: 20, border: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 16 }}>
-              {[
-                { k: "text", l: "WhatsApp Text", d: "Daily message with advice", s: textEnabled, set: setTextEnabled },
-                { k: "audio", l: "WhatsApp Audio", d: "Voice note in Swahili", s: audioEnabled, set: setAudioEnabled },
-              ].map(({ k, l, d, s, set }) => (
-                <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div><p style={{ fontWeight: 600, margin: 0 }}>{l}</p><p style={{ fontSize: 13, color: TEXT_SEC, margin: "2px 0 0" }}>{d}</p></div>
-                  <button onClick={() => set(!s)}
-                    style={{ width: 48, height: 28, borderRadius: 14, border: "none", background: s ? GREEN : BORDER, cursor: "pointer", position: "relative", transition: "background 0.2s" }}>
-                    <div style={{ width: 22, height: 22, borderRadius: "50%", background: BG, position: "absolute", top: 3, left: s ? 23 : 3, transition: "left 0.2s" }} />
-                  </button>
-                </div>
-              ))}
-              <div>
-                <label style={{ ...labelStyle, marginBottom: 8 }}>Language</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {[{ k: "en", l: "English" }, { k: "sw", l: "Kiswahili" }].map(({ k, l }) => (
-                    <button key={k} onClick={() => setLanguage(k)}
-                      style={{ flex: 1, borderRadius: 12, padding: "12px", fontSize: 14, fontWeight: 600, border: language === k ? `2px solid ${GREEN}` : `1px solid ${BORDER}`, background: language === k ? "rgba(74,222,128,0.08)" : "transparent", color: language === k ? GREEN : TEXT_SEC, cursor: "pointer", transition: "all 0.2s" }}>{l}</button>
-                  ))}
-                </div>
-              </div>
+            <div>
+              <label className="block text-cream text-sm font-medium mb-1.5">Soil Type</label>
+              <select
+                value={form.soilType}
+                onChange={(e) => update("soilType", e.target.value)}
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream focus:outline-none focus:border-canopy-400"
+              >
+                {SOIL_TYPES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
             </div>
-            <button onClick={register} style={btnStyle}>
-              Complete Registration <Check size={18} />
-            </button>
-            {status && <p style={{ fontSize: 13, color: GREEN, textAlign: "center" }}>{status}</p>}
-            {error && <p style={{ fontSize: 13, color: RED, textAlign: "center" }}>{error}</p>}
           </div>
         )}
 
+        {/* Step 4: Crop */}
         {step === 4 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 24, textAlign: "center", alignItems: "center" }}>
-            <div style={{ width: 72, height: 72, borderRadius: "50%", background: "rgba(74,222,128,0.1)", border: "2px solid rgba(74,222,128,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Check size={36} color={GREEN} />
+          <div className="bg-soil-800 rounded-2xl border border-border p-6 space-y-4">
+            <div>
+              <label className="block text-cream text-sm font-medium mb-1.5">Potato Variety</label>
+              <select
+                value={form.variety}
+                onChange={(e) => update("variety", e.target.value)}
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream focus:outline-none focus:border-canopy-400"
+              >
+                {POTATO_VARIETIES.map((v) => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
             </div>
             <div>
-              <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", margin: 0 }}>Karibu FarmWise!</h1>
-              <p style={{ fontSize: 14, color: TEXT_SEC, lineHeight: 1.5, marginTop: 8 }}>
-                Your farm <strong>{plotName || "plot"}</strong> in {county} is now being monitored.
-                {status && <><br />{status}</>}
-              </p>
+              <label className="block text-cream text-sm font-medium mb-1.5">Planting Date</label>
+              <input
+                type="date"
+                value={form.plantingDate}
+                onChange={(e) => update("plantingDate", e.target.value)}
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream focus:outline-none focus:border-canopy-400"
+              />
             </div>
-            <a href="/"
-              style={{ background: "linear-gradient(135deg, #4ade80, #22c55e)", border: "none", borderRadius: 14, padding: "14px 36px", fontSize: 15, fontWeight: 700, color: "#0d1f15", textDecoration: "none", display: "flex", alignItems: "center", gap: 8 }}>
-              Go to Dashboard <ArrowRight size={18} />
-            </a>
           </div>
         )}
-      </main>
+
+        {/* Step 5: Growth Stage */}
+        {step === 5 && (
+          <div className="bg-soil-800 rounded-2xl border border-border p-6 space-y-4">
+            <p className="text-cream text-sm">
+              Help us estimate your planting date by telling us which growth stage your crop is in.
+            </p>
+            <div>
+              <label className="block text-cream text-sm font-medium mb-1.5">Which growth stage is your crop in?</label>
+              <select
+                value={form.growthStage}
+                onChange={(e) => update("growthStage", e.target.value)}
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream focus:outline-none focus:border-canopy-400"
+              >
+                {GROWTH_STAGES.map((gs) => (
+                  <option key={gs.value} value={gs.value}>{gs.label}</option>
+                ))}
+              </select>
+            </div>
+            {form.plantingDate && (
+              <div className="bg-canopy-600/10 border border-canopy-600/30 rounded-lg p-3">
+                <p className="text-muted text-xs mb-1">Estimated Planting Date</p>
+                <p className="text-canopy-300 text-sm font-mono">{form.plantingDate}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Step 6: Contact Preference */}
+        {step === 6 && (
+          <div className="bg-soil-800 rounded-2xl border border-border p-6 space-y-4">
+            <div>
+              <label className="block text-cream text-sm font-medium mb-1.5">Notification Channel</label>
+              <select
+                value={form.channel}
+                onChange={(e) => update("channel", e.target.value)}
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream focus:outline-none focus:border-canopy-400"
+              >
+                <option value="whatsapp_text">WhatsApp (Recommended)</option>
+                <option value="sms">SMS</option>
+                <option value="whatsapp_audio">WhatsApp + Audio</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-cream text-sm font-medium mb-1.5">Language</label>
+              <select
+                value={form.language}
+                onChange={(e) => update("language", e.target.value)}
+                className="w-full bg-soil-700 border border-border rounded-lg px-4 py-3 text-cream focus:outline-none focus:border-canopy-400"
+              >
+                <option value="sw">Swahili</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        {/* Step 7: Summary */}
+        {step === 7 && (
+          <div className="bg-soil-800 rounded-2xl border border-border p-6 space-y-3">
+            <h3 className="text-lg font-display font-bold text-cream">Confirm your setup</h3>
+            <div className="space-y-2 text-sm">
+              <SummaryRow label="Name" value={form.name} />
+              <SummaryRow label="County" value={form.county} />
+              <SummaryRow label="Plot" value={form.plotName || "(not set)"} />
+              <SummaryRow label="Area" value={`${form.areaHa} ha`} />
+              <SummaryRow label="Soil" value={form.soilType} />
+              <SummaryRow label="Variety" value={form.variety} />
+              <SummaryRow label="Growth Stage" value={GROWTH_STAGES.find((s) => s.value === form.growthStage)?.label || form.growthStage} />
+              <SummaryRow label="Planted (est.)" value={form.plantingDate} />
+              <SummaryRow label="Language" value={form.language === "sw" ? "Swahili" : "English"} />
+            </div>
+            {loading && setupSteps.length > 0 && (
+              <div className="bg-soil-700 rounded-xl p-4 space-y-1.5 mt-3 mb-3">
+                {setupSteps.map((s, i) => (
+                  <p key={i} className={`text-sm font-mono ${s.includes("done") || s.includes("complete") ? "text-canopy-300" : "text-cream"}`}>
+                    {s.includes("done") || s.includes("complete") ? "✓ " : "⏳ "}{s}
+                  </p>
+                ))}
+              </div>
+            )}
+            {errorMsg && (
+              <div className="bg-alert-500/10 border border-alert-500/30 rounded-lg px-4 py-3 text-alert-300 text-sm mt-3">
+                {errorMsg}
+              </div>
+            )}
+            <button
+              onClick={handleComplete}
+              disabled={loading}
+              className="w-full bg-canopy-500 hover:bg-canopy-400 text-white font-semibold py-3 rounded-lg transition disabled:opacity-50 mt-4"
+            >
+              {loading ? "Setting up..." : "Finish Setup & Go to Dashboard"}
+            </button>
+          </div>
+        )}
+
+        {/* Navigation */}
+        {step < 7 && (
+          <div className="flex justify-between mt-6">
+            <button
+              onClick={() => setStep((s) => Math.max(1, s - 1))}
+              disabled={step === 1}
+              className="px-6 py-3 bg-soil-800 border border-border text-cream rounded-lg disabled:opacity-30 hover:border-canopy-400 transition"
+            >
+              Back
+            </button>
+            <button
+              onClick={() => setStep((s) => Math.min(7, s + 1))}
+              className="px-6 py-3 bg-canopy-500 hover:bg-canopy-400 text-white font-semibold rounded-lg transition"
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between py-1 border-b border-border/50">
+      <span className="text-muted">{label}</span>
+      <span className="text-cream font-medium">{value}</span>
     </div>
   );
 }

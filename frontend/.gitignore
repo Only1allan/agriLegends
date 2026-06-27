@@ -4,3 +4,4 @@ out/
 .env.local
 public/sw*
 public/swe-worker*
+.opencode

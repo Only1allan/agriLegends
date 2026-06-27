@@ -4,9 +4,9 @@ import { useEffect } from "react";
 
 export default function Page() {
   useEffect(() => {
-    const fid = localStorage.getItem("farmerId");
-    window.location.href = fid ? "/home" : "/onboarding";
+    const token = localStorage.getItem("farmwise_token");
+    window.location.href = token ? "/dashboard" : "/login";
   }, []);
-  
-  return <div style={{background:"#0d1f15",minHeight:"100dvh"}}/>;
+
+  return <div className="bg-soil-900 min-h-dvh" />;
 }

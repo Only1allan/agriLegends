@@ -1,272 +1,235 @@
 """
-Daily Diagnostic Agent: GraphRAG synthesis — extracts the full connected
-subgraph for a plot, feeds it to Featherless LLM, stores as DailyRecommendation,
-and logs the decision on Masumi with full lifecycle (create + complete).
+Diagnostic Agent: GraphRAG synthesis — reads from DailySnapshot pipeline model,
+sends to Featherless LLM, stores as Alert nodes, and logs decisions on Masumi.
 """
 import json
+import uuid as uuid_mod
 from datetime import datetime, timezone
 from services.neo4j import query_one, query
-from services.featherless import chat, safe_content
+from services.featherless import structured_completion
 from services.masumi import (
-    log_decision,
-    complete_decision,
-    build_canonical_input,
-    build_canonical_output,
-    sha256_hash,
-    _build_agent_identifier,
-    _build_purchaser_id,
+    log_decision, complete_decision,
+    build_canonical_input, build_canonical_output,
+    sha256_hash, _build_agent_identifier, _build_purchaser_id,
 )
 from config import settings
 
 
-async def extract_subgraph(plot_id: str) -> dict:
-    """Extract the connected subgraph for a plot's most recent observation day."""
-    ctx = query_one(
-        """
-        MATCH (p:Plot {plotId: $plot_id})-[:AT_STAGE]->(gs:GrowthStage)
-        MATCH (p)-[:HAS_OBSERVATION]->(obs)-[:OCCURRED_ON]->(d:TimeDay)
-        WITH p, gs, d, obs
-        ORDER BY d.date DESC
-        WITH p, gs, collect(obs)[0..10] AS todayObs
-        UNWIND todayObs AS obs
-        OPTIONAL MATCH (p)-[:LOCATED_IN]->(c:County)<-[:RELEVANT_TO]-(na:NewsAlert)
-        OPTIONAL MATCH (p)-[:EXPERIENCED_STRESS]->(se:StressEvent)
-            WHERE se.detectedAt >= datetime() - duration('P7D')
-        OPTIONAL MATCH (gs)-[:HAS_RISK]->(pest:Pest)
-        WITH p, gs,
-             collect(DISTINCT properties(obs)) AS todayObsColl,
-             collect(DISTINCT na.headline) AS alerts,
-             collect(DISTINCT se.type) AS stressTypes,
-             collect(DISTINCT pest.name) AS riskNames
-        RETURN {
-            plot: {
-                plotId: p.plotId,
-                name: p.name,
-                latitude: p.latitude,
-                longitude: p.longitude,
-                sizeAcres: p.sizeAcres,
-                variety: p.variety,
-                plantingDate: toString(p.plantingDate),
-                seasonDay: p.seasonDay,
-                soilBaseline_N: p.soilBaseline_N,
-                soilBaseline_pH: p.soilBaseline_pH,
-                accumulatedGDD: p.accumulatedGDD,
-                forecastedYieldKg: p.forecastedYieldKg
-            },
-            stage: gs.name,
-            todayObservations: todayObsColl,
-            activeAlerts: alerts,
-            newStressEvents: stressTypes,
-            stageRisks: riskNames,
-            forecastedYieldKg: p.forecastedYieldKg
-        } AS ctx
-        """,
-        {"plot_id": plot_id},
+ALERT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["NORMAL", "WARNING", "CRITICAL"]},
+        "detected_condition": {"type": "string"},
+        "confidence": {"type": "number"},
+        "justification": {"type": "string"},
+        "explanation": {"type": "string"},
+        "recommendation": {"type": "string"},
+        "urgency": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"]},
+        "sms_english": {"type": "string", "maxLength": 160},
+        "sms_swahili": {"type": "string", "maxLength": 160},
+    },
+    "required": ["status", "detected_condition", "confidence", "explanation", "recommendation", "urgency", "sms_english", "sms_swahili"],
+}
+
+
+async def extract_season_subgraph(season_id: str) -> dict:
+    """Extract the full subgraph for a season from the pipeline model."""
+    result = query_one("""
+        MATCH (p:Plot)-[:HAS_SEASON]->(s:Season {seasonId: $sid})
+        OPTIONAL MATCH (s)-[:PLANTED_WITH]->(v:PotatoVariety)
+        OPTIONAL MATCH (s)-[:HAS_GROWTH_STAGE]->(g:GrowthStage)
+        OPTIONAL MATCH (s)-[:HAS_SNAPSHOT]->(d:DailySnapshot)
+        OPTIONAL MATCH (p)-[:LOCATED_IN]->(c:County)
+        WITH p, s, v, g, c,
+             collect(DISTINCT d)[0..14] AS recentSnaps
+        RETURN p.plotId AS plotId, p.name AS plotName,
+               p.county AS county, p.areaHa AS areaHa,
+               s.seasonId AS seasonId,
+               toString(s.plantingDate) AS plantingDate,
+               toString(s.expectedHarvestDate) AS expectedHarvestDate,
+               coalesce(v.name, 'Shangi') AS variety,
+               coalesce(g.name, 'Unknown') AS stage,
+               coalesce(g.description, '') AS stageDesc,
+               c.name AS countyName,
+               [d IN recentSnaps | {
+                   date: d.date, precip: d.daily_precip_mm,
+                   temp: d.daily_avg_temp_c, humidity: d.daily_avg_humidity,
+                   hasSat: d.has_satellite_data, ndvi: d.mean_ndvi,
+                   evi: d.mean_evi, cloud: d.cloud_cover_percentage,
+                   r5precip: d.rolling_5d_precip, r5temp: d.rolling_5d_temp_avg
+               }] AS snapshots
+    """, {"sid": season_id})
+    return result if result else {}
+
+
+async def run_diagnostic(season_id: str) -> dict:
+    """Full diagnostic pipeline: extract subgraph → LLM synthesis → store Alert + Masumi."""
+    subgraph = await extract_season_subgraph(season_id)
+    if not subgraph or not subgraph.get("snapshots"):
+        return {"status": "no_data", "message": "No snapshots available for evaluation"}
+
+    latest = subgraph["snapshots"][0] if subgraph["snapshots"] else {}
+
+    conditions = _evaluate_conditions(latest)
+    if not conditions:
+        return {"status": "normal", "message": "No risk conditions detected"}
+
+    knowledge = []
+    variety = subgraph.get("variety", "Shangi")
+    for cond in conditions:
+        kg = query("""
+            MATCH (w:WeatherCondition {name: $cond})<-[:THRIVES_IN]-(pest:Pest)
+            OPTIONAL MATCH (pest)-[:DETECTED_BY]->(:Symptom)-[:TREATED_BY]->(i:Intervention)
+            RETURN pest.name AS disease,
+                   'None' AS resistance,
+                   collect(DISTINCT i.action) AS controls,
+                   [] AS chemicals
+        """, {"cond": cond, "variety": variety})
+        knowledge.append({"condition": cond, "diseases": kg})
+
+    context = _build_llm_context(subgraph, latest, knowledge)
+
+    result = await structured_completion(
+        system="You are a potato agronomist AI for Kenyan smallholder farmers. "
+               "Analyze field conditions and disease risks using scientific knowledge.",
+        user=context,
+        schema=ALERT_SCHEMA,
     )
-    return ctx["ctx"] if ctx else {}
 
+    status = result.get("status", "NORMAL")
+    if status not in ("WARNING", "CRITICAL"):
+        return {"status": "normal", "conditions": conditions, "message": "Conditions present but not severe"}
 
-async def synthesize_diagnosis(subgraph: dict) -> dict:
-    """Send subgraph to Featherless LLM for synthesis — LLM is translator, not decision-maker."""
-    result = await chat(
-        model=settings.FEATHERLESS_CHAT_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an agricultural diagnostic translator for potato farming in Kenya. "
-                    "Given structured crop monitoring data, return ONLY a JSON object with these fields: "
-                    '{"action": "what the farmer should do", '
-                    '"cause": "why (pest/disease/stress name)", '
-                    '"urgencyHours": number, '
-                    '"narrative": "one clear sentence in English for the farmer", '
-                    '"dataFreshness": number of days since latest satellite observation}. '
-                    "Translate data into one actionable sentence. Do not invent actions. "
-                    "If observations array is empty, set dataFreshness to 999. "
-                    "Return ONLY valid JSON, no markdown, no explanation."
-                ),
-            },
-            {"role": "user", "content": json.dumps(subgraph)},
-        ],
-    )
+    alert_id = str(uuid_mod.uuid4())
+    now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+    sms_en = str(result.get("sms_english", ""))[:160]
+    sms_sw = str(result.get("sms_swahili", ""))[:160]
 
-    content = safe_content(result)
-    content = content.strip().removeprefix("```json").removesuffix("```").strip()
-
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        return {
-            "action": "monitor_crop",
-            "cause": "insufficient_data",
-            "urgencyHours": 24,
-            "narrative": "No data available for today. Continue monitoring your farm and check back tomorrow.",
-            "dataFreshness": 999,
-        }
-
-
-async def store_recommendation(
-    plot_id: str, diagnosis: dict, subgraph: dict
-) -> tuple[str, str]:
-    """
-    Store recommendation in Neo4j and log decision on Masumi.
-    Stores full audit trail: inputHash, outputHash, txHash, onChainState,
-    agentIdentifier, purchaserIdentifier.
-    Returns (tx_hash, masumi_status).
-    """
-    query(
-        """
-        MATCH (p:Plot {plotId: $plot_id})
-        CREATE (rec:DailyRecommendation {
-            date: date(),
-            action: $action,
-            cause: $cause,
-            urgencyHours: $urgency,
-            narrative: $narrative,
-            dataFreshness: $freshness
+    query("""
+        MATCH (s:Season {seasonId: $sid})
+        CREATE (a:Alert {
+            alertId: $aid,
+            detected_condition: $condition,
+            confidence: $conf,
+            explanation: $expl,
+            recommendation: $rec,
+            urgency: $urgency,
+            status: 'ACTIVE',
+            sms_english: $sms_en,
+            sms_swahili: $sms_sw,
+            createdAt: $now,
+            retryCount: 0
         })
-        CREATE (p)-[:HAS_RECOMMENDATION]->(rec)
-        """,
-        {
-            "plot_id": plot_id,
-            "action": diagnosis.get("action", "monitor_crop"),
-            "cause": diagnosis.get("cause", "unknown"),
-            "urgency": diagnosis.get("urgencyHours", 24),
-            "narrative": diagnosis.get("narrative", ""),
-            "freshness": diagnosis.get("dataFreshness", 0),
-        },
-    )
+        CREATE (s)-[:GENERATED]->(a)
+    """, {
+        "sid": season_id, "aid": alert_id,
+        "condition": result.get("detected_condition", conditions[0]) if conditions else "",
+        "conf": result.get("confidence", 0),
+        "expl": result.get("explanation", ""),
+        "rec": result.get("recommendation", ""),
+        "urgency": result.get("urgency", "LOW"),
+        "sms_en": sms_en, "sms_sw": sms_sw, "now": now_ts,
+    })
 
-    agent_identifier = _build_agent_identifier()
-    purchaser_identifier = _build_purchaser_id()
+    if latest.get("snapid"):
+        query("""
+            MATCH (a:Alert {alertId: $aid})
+            MATCH (d:DailySnapshot {snapshotId: $snapid})
+            CREATE (a)-[:TRIGGERED_BY]->(d)
+        """, {"aid": alert_id, "snapid": latest.get("snapid")})
 
-    masumi_payload = {
-        "plotId": plot_id,
-        "action": diagnosis.get("action", ""),
-        "cause": diagnosis.get("cause", ""),
-        "urgencyHours": diagnosis.get("urgencyHours", 0),
-        "stage": subgraph.get("stage", "unknown"),
-        "forecastedYieldKg": subgraph.get("forecastedYieldKg", 0),
-        "narrative": diagnosis.get("narrative", ""),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-    canonical_input = build_canonical_input(masumi_payload)
-    canonical_output = build_canonical_output(diagnosis)
-    input_hash = sha256_hash(canonical_input)
-    output_hash = sha256_hash(canonical_output)
-    timestamp = datetime.now(timezone.utc).isoformat()
-
-    masumi_status = "SUBMITTED"
-    tx_hash = None
-    on_chain_state = "CREATED"
-
+    masumi_status = "NOT_LOGGED"
+    tx_hash = ""
     try:
+        masumi_payload = {
+            "seasonId": season_id,
+            "alertId": alert_id,
+            "condition": result.get("detected_condition", ""),
+            "urgency": result.get("urgency", ""),
+            "explanation": result.get("explanation", ""),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
         tx_hash = await log_decision(masumi_payload)
+        if tx_hash:
+            masumi_status = "CREATED"
+            query("""
+                MATCH (a:Alert {alertId: $aid})
+                SET a.masumiTxHash = $hash
+            """, {"aid": alert_id, "hash": tx_hash})
+            try:
+                completion = await complete_decision(tx_hash, masumi_payload)
+                if completion.get("verified"):
+                    masumi_status = "VERIFIED_ON_CHAIN"
+                    query("""
+                        MATCH (a:Alert {alertId: $aid})
+                        SET a.masumiStatus = 'VERIFIED_ON_CHAIN'
+                    """, {"aid": alert_id})
+            except Exception:
+                masumi_status = "COMPLETE_PENDING"
     except Exception as e:
-        masumi_status = f"CREATE_FAILED: {str(e)}"
-
-    if tx_hash:
-        query(
-            """
-            MATCH (p:Plot {plotId: $plot_id})-[:HAS_RECOMMENDATION]->(rec:DailyRecommendation {date: date()})
-            CREATE (tx:MasumiTxHash {
-                hash: $hash,
-                inputHash: $input_hash,
-                outputHash: $output_hash,
-                status: $status,
-                onChainState: $chain_state,
-                agentIdentifier: $agent_id,
-                purchaserIdentifier: $purchaser_id,
-                verifiedAt: $timestamp,
-                network: 'Preprod'
-            })
-            CREATE (rec)-[:HAS_TX]->(tx)
-            """,
-            {
-                "plot_id": plot_id,
-                "hash": tx_hash,
-                "input_hash": input_hash,
-                "output_hash": output_hash,
-                "status": masumi_status,
-                "chain_state": on_chain_state,
-                "agent_id": agent_identifier,
-                "purchaser_id": purchaser_identifier,
-                "timestamp": timestamp,
-            },
-        )
-
-        try:
-            completion = await complete_decision(tx_hash, diagnosis)
-            on_chain_state = completion.get("onChainState", "FundsLocked")
-            if completion.get("verified"):
-                masumi_status = "VERIFIED_ON_CHAIN"
-            elif on_chain_state:
-                masumi_status = on_chain_state
-            query(
-                """
-                MATCH (tx:MasumiTxHash {hash: $hash})
-                SET tx.status = $status, tx.onChainState = $chain_state
-                """,
-                {"hash": tx_hash, "status": masumi_status, "chain_state": on_chain_state},
-            )
-        except Exception as e:
-            masumi_status = f"COMPLETE_PENDING: {str(e)}"
-            query(
-                """
-                MATCH (tx:MasumiTxHash {hash: $hash})
-                SET tx.status = $status, tx.onChainState = $chain_state
-                """,
-                {"hash": tx_hash, "status": masumi_status, "chain_state": on_chain_state},
-            )
-
-    return tx_hash or "", masumi_status
-
-
-async def run_diagnostic(plot_id: str) -> dict:
-    """Full diagnostic pipeline: extract → synthesize → store → log on Masumi."""
-    subgraph = await extract_subgraph(plot_id)
-    diagnosis = await synthesize_diagnosis(subgraph)
-    tx_hash, masumi_status = await store_recommendation(plot_id, diagnosis, subgraph)
+        masumi_status = f"CREATE_FAILED: {str(e)[:100]}"
 
     return {
-        "action": diagnosis.get("action"),
-        "cause": diagnosis.get("cause"),
-        "urgencyHours": diagnosis.get("urgencyHours"),
-        "narrative": diagnosis.get("narrative"),
-        "dataFreshness": diagnosis.get("dataFreshness"),
-        "masumiTxHash": tx_hash,
-        "masumiStatus": masumi_status,
+        "alertId": alert_id, "status": status,
+        "detected_condition": result.get("detected_condition", ""),
+        "confidence": result.get("confidence", 0),
+        "explanation": result.get("explanation", ""),
+        "recommendation": result.get("recommendation", ""),
+        "urgency": result.get("urgency", ""),
+        "masumiTxHash": tx_hash, "masumiStatus": masumi_status,
     }
 
 
-async def run_batch_diagnostics() -> list[dict]:
-    """Run diagnostic for all plots — one Masumi tx per plot."""
-    plots = query("MATCH (p:Plot) RETURN p.plotId AS plotId")
-    results = []
-    for p in plots:
-        try:
-            result = await run_diagnostic(p["plotId"])
-            results.append(result)
-        except Exception as e:
-            results.append({"plotId": p["plotId"], "error": str(e)})
-    return results
+def _evaluate_conditions(d: dict) -> list[str]:
+    triggered = []
+    if not d:
+        return triggered
+    precip_5d = float(d.get("r5precip", 0) or 0)
+    temp = float(d.get("temp", 0) or 0)
+    has_sat = d.get("hasSat", False)
+    ndvi = float(d.get("ndvi", 0) or 0) if has_sat else 0
+
+    if precip_5d == 0.0 and temp > 26.0:
+        triggered.append("Hot & Dry")
+    if precip_5d > 15.0 and 18.0 <= temp <= 24.0:
+        triggered.append("Warm & Humid")
+    if temp < 10.0:
+        triggered.append("Cold Stress")
+    if precip_5d > 40.0:
+        triggered.append("Waterlogged")
+    if has_sat and ndvi < 0.3:
+        triggered.append("Low NDVI")
+    return triggered
 
 
-async def run_pest_diagnosis(plot_id: str) -> list[dict]:
-    """Run knowledge graph pest diagnosis traversal."""
-    results = query(
-        """
-        MATCH (p:Plot {plotId: $plot_id})-[:AT_STAGE]->(gs:GrowthStage)
-        MATCH (p)-[:HAS_OBSERVATION]->(w:Observation_Weather)-[:OCCURRED_ON]->(d:TimeDay {date: date()})
-        MATCH (gs)-[:HAS_RISK]->(pest:Pest)-[:THRIVES_IN]->(wc:WeatherCondition)
-        WHERE w.tempMin >= wc.tempMin AND w.tempMax <= wc.tempMax
-            AND w.precipitation >= COALESCE(wc.humidityMin, 0)
-        MATCH (pest)-[:DETECTED_BY]->(s:Symptom)-[:TREATED_BY]->(i:Intervention)
-        RETURN pest.name AS cause, pest.scientificName AS scientific,
-               i.action, i.urgencyHours, i.method, gs.name AS stage
-        """,
-        {"plot_id": plot_id},
-    )
+def _build_llm_context(subgraph: dict, latest: dict, knowledge: list) -> str:
+    lines = [
+        f"Plot: {subgraph.get('plotName', 'Unknown')}",
+        f"County: {subgraph.get('countyName', '')}",
+        f"Variety: {subgraph.get('variety', 'Unknown')}",
+        f"Growth Stage: {subgraph.get('stage', 'Unknown')} — {subgraph.get('stageDesc', '')}",
+        f"Planted: {subgraph.get('plantingDate', '')}",
+        "",
+        "Latest Telemetry:",
+        f"  Date: {latest.get('date', 'N/A')}",
+        f"  Temperature: {latest.get('temp', 'N/A')} C",
+        f"  Precipitation: {latest.get('precip', 'N/A')} mm",
+        f"  Humidity: {latest.get('humidity', 'N/A')}%",
+        f"  5-day Rolling Precip: {latest.get('r5precip', 'N/A')} mm",
+    ]
+    if latest.get("hasSat"):
+        lines.extend([
+            f"  NDVI: {latest.get('ndvi', 'N/A')}",
+            f"  EVI: {latest.get('evi', 'N/A')}",
+            f"  Cloud Cover: {latest.get('cloud', 'N/A')}%",
+        ])
 
-    return results
+    lines.append("")
+    lines.append("Knowledge Graph Disease Findings:")
+    for item in knowledge:
+        lines.append(f"  Condition: {item['condition']}")
+        for dis in item.get("diseases", []):
+            lines.append(f"    Disease: {dis.get('disease', 'Unknown')} (Resistance: {dis.get('resistance', 'None')})")
+            lines.append(f"    Controls: {', '.join([c for c in (dis.get('controls', []) or []) if c])}")
+            lines.append(f"    Chemicals: {', '.join([c for c in (dis.get('chemicals', []) or []) if c])}")
+    return "\n".join(lines)

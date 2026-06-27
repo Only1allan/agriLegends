@@ -12,47 +12,60 @@ import re
 from typing import Any
 
 from services.featherless import chat, safe_content
-from services.neo4j import query
-from agents.diagnostic import extract_subgraph, run_pest_diagnosis
+from services.neo4j import query, query_one
+from agents.diagnostic import extract_season_subgraph
 from config import settings
 
 NEO4J_SCHEMA = """
 Node labels and properties:
-- Plot: plotId, name, latitude, longitude, sizeAcres, variety, plantingDate, seasonDay, soilBaseline_N, soilBaseline_pH, soilBaseline_C, accumulatedGDD, forecastedYieldKg, agromonitoringPolygonId
-- GrowthStage: name, dayStart, dayEnd
-- Observation_Satellite: ndvi, evi, cloudCover
-- Observation_Weather: tempMax, tempMin, precipitation, humidity
+- Plot: plotId, name, latitude, longitude, areaHa, variety, soilType, county, location, boundaryPolygon, stakeholderToken
+- Season: seasonId, plantingDate, expectedHarvestDate, actualHarvestDate, status (ACTIVE/CLOSED), varietyName
+- DailySnapshot: snapshotId, date, daily_precip_mm, daily_avg_temp_c, daily_avg_humidity, rolling_5d_precip, rolling_10d_precip, rolling_14d_precip, rolling_5d_temp_avg, rolling_5d_humidity_avg, has_satellite_data, cloud_cover_percentage, mean_ndvi, mean_evi, mean_ndre, mean_ndwi, mean_savi, mean_msi
+- Alert: alertId, detected_condition, confidence, explanation, recommendation, urgency, status, sms_english, sms_swahili, createdAt, dispatchedAt, retryCount, masumiTxHash
+- FarmerObservation: observationId, date, notes, imageUrl, interpretation, interpretationStatus
+- Intervention: interventionId, actionTaken, date
+- Expense: expenseId, category, description, amount, date
+- YieldForecast: forecastId, date, predictedYield, confidenceLow, confidenceHigh, basis
+- Sale: saleId, quantity_kg, unit_price, total_amount, buyer, sale_date
+- GrowthStage: name, description, dayStart, dayEnd, startDaysAfterPlanting, endDaysAfterPlanting
+- PotatoVariety: name, maturityDays
 - Pest: name, scientificName
 - Symptom: sensorType, threshold
-- Intervention: action, urgencyHours, method
-- StressEvent: type, detectedAt
-- DailyRecommendation: action, cause, urgencyHours, narrative, date
-- MasumiTxHash: hash, status
-- Farmer: farmerId, phone, name, preferredChannel, preferredLanguage, registrationDate
-- TimeDay: date
-- NewsAlert: headline, url, publishedAt, region
+- WeatherCondition: name, tempMin, tempMax, humidityMin
+- Disease: name
+- Agrochemical: name
 - County: name, centroidLat, centroidLon
+- Farmer: farmerId, phone, name, preferredChannel, preferredLanguage, registrationDate
 
 Relationships:
-- (Plot)-[:AT_STAGE]->(GrowthStage)
-- (Plot)-[:HAS_OBSERVATION]->(Observation_Satellite)
-- (Plot)-[:HAS_OBSERVATION]->(Observation_Weather)
-- (Plot)-[:EXPERIENCED_STRESS]->(StressEvent)
-- (Plot)-[:HAS_RECOMMENDATION]->(DailyRecommendation)
+- (Plot)-[:HAS_SEASON]->(Season)
 - (Plot)-[:LOCATED_IN]->(County)
-- (Plot)-[:OWNED_BY]->(Farmer)   // Farmer-[:OWNS]->Plot
+- (Plot)-[:OWNS]<-[:OWNS]-(Farmer)   // Farmer-[:OWNS]->Plot
+- (Season)-[:HAS_SNAPSHOT]->(DailySnapshot)
+- (Season)-[:HAS_OBSERVATION]->(FarmerObservation)
+- (Season)-[:GENERATED]->(Alert)
+- (Season)-[:PLANTED_WITH]->(PotatoVariety)
+- (Season)-[:HAS_GROWTH_STAGE]->(GrowthStage)
+- (Season)-[:HAS_EXPENSE]->(Expense)
+- (Season)-[:HAS_FORECAST]->(YieldForecast)
+- (Season)-[:HAS_SALE]->(Sale)
+- (Alert)-[:TRIGGERED_BY]->(DailySnapshot)
+- (Alert)-[:TRIGGERED_BY]->(FarmerObservation)
+- (Farmer)-[:APPLIED]->(Intervention)
+- (Intervention)-[:ADDRESSES]->(Alert)
+- (Intervention)-[:HAS_EXPENSE]->(Expense)
+- (PotatoVariety)-[:HAS_GROWTH_STAGE]->(GrowthStage)
 - (GrowthStage)-[:HAS_RISK]->(Pest)
 - (Pest)-[:DETECTED_BY]->(Symptom)
 - (Symptom)-[:TREATED_BY]->(Intervention)
 - (Pest)-[:THRIVES_IN]->(WeatherCondition)
-- (Observation_Satellite)-[:OCCURRED_ON]->(TimeDay)
-- (Observation_Weather)-[:OCCURRED_ON]->(TimeDay)
-- (DailyRecommendation)-[:HAS_TX]->(MasumiTxHash)
-- (County)<-[:RELEVANT_TO]-(NewsAlert)
+- (WeatherCondition)-[:FAVORS]->(Disease)
+- (PotatoVariety)-[:RESISTANT_TO]->(Disease)
+- (Agrochemical)-[:MITIGATES]->(Disease)
 """
 
 INTENT_SYSTEM_PROMPT = f"""You are a Cypher query generator for a Neo4j potato farming database. Given the schema below and a farmer's question, output ONLY a valid JSON object with two keys:
-- "intent": short label for what the farmer wants (growth_stage, ndvi, weather, pest, yield, stress, recommendation, general, greeting, or unknown)
+- "intent": short label for what the farmer wants (growth_stage, ndvi, weather, pest, yield, stress, recommendation, general, greeting, alerts, finances, or unknown)
 - "cypher": a valid Neo4j Cypher READ-QUERY (MATCH...RETURN only, no CREATE/DELETE/SET/MERGE/DETACH) that answers the question. Use $plot_id as parameter. Limit results to 10.
 
 Schema:
@@ -63,13 +76,15 @@ Rules:
 - Only MATCH/RETURN queries — no mutations
 - If the question is a greeting or chit-chat, set cypher to null
 - If you cannot determine a query, set cypher to null and intent to "unknown"
-- For pest questions, traverse: Plot->GrowthStage->Pest->Symptom->Intervention
-- For weather, join via OCCURRED_ON to TimeDay
-- For NDVI, query Observation_Satellite nodes
-- For general farm status, query the Plot itself
+- For pest questions, traverse: Plot->Season->PotatoVariety->GrowthStage->Pest->Symptom->Intervention
+- For weather, query DailySnapshot nodes via Season
+- For NDVI/satellite, query DailySnapshot nodes
+- For alerts, query Alert nodes via Season
+- For general farm status, query the Season with latest DailySnapshot
+- For finances, query Expense and Sale nodes via Season
 
 Example output:
-{{"intent": "ndvi", "cypher": "MATCH (p:Plot {{plotId: $plot_id}})-[:HAS_OBSERVATION]->(obs:Observation_Satellite)-[:OCCURRED_ON]->(d:TimeDay) WHERE d.date >= date() - duration('P14D') RETURN toString(d.date) AS date, obs.ndvi AS ndvi ORDER BY d.date"}}
+{{"intent": "ndvi", "cypher": "MATCH (p:Plot {{plotId: $plot_id}})-[:HAS_SEASON]->(s:Season)-[:HAS_SNAPSHOT]->(d:DailySnapshot) WHERE d.date >= date() - duration({{days: 14}}) AND d.has_satellite_data = true RETURN toString(d.date) AS date, d.mean_ndvi AS ndvi ORDER BY d.date DESC LIMIT 10"}}
 """
 
 ANSWER_SYSTEM_PROMPT = """You are FarmWise AI, a potato farming assistant for Kenyan farmers. You have real farm data from Neo4j.
@@ -98,12 +113,15 @@ MAX_HISTORY = 10
 CONTEXT_EXCHANGES = 3
 
 
-def _get_plot_id(farmer_id: str) -> str | None:
-    results = query(
-        "MATCH (f:Farmer {farmerId: $fid})-[:OWNS]->(p:Plot) RETURN p.plotId AS pid LIMIT 1",
-        {"fid": farmer_id},
-    )
-    return results[0]["pid"] if results else None
+def _get_plot_context(farmer_id: str) -> dict:
+    """Get farmer's plot and active season for context."""
+    result = query_one("""
+        MATCH (f:Farmer {farmerId: $fid})-[:OWNS]->(p:Plot)
+        OPTIONAL MATCH (p)-[:HAS_SEASON]->(s:Season {status: "ACTIVE"})
+        RETURN p.plotId AS plotId, p.name AS plotName, s.seasonId AS seasonId
+        LIMIT 1
+    """, {"fid": farmer_id})
+    return result if result else {}
 
 
 def _sanitize_cypher(cypher: str) -> str | None:
@@ -177,18 +195,23 @@ async def _synthesize_answer(
 
     if subgraph:
         context_parts.append(f"\n=== FARM SUBGRAPH (supplementary context) ===")
-        if subgraph.get("plot"):
-            p = subgraph["plot"]
-            plot_summary = {
-                "name": p.get("name"), "variety": p.get("variety"),
-                "seasonDay": p.get("seasonDay"), "stage": subgraph.get("stage"),
-                "soil_pH": p.get("soilBaseline_pH"), "soil_N": p.get("soilBaseline_N"),
-            }
-            context_parts.append(f"Plot Summary: {json.dumps(plot_summary, default=str)}")
-        if subgraph.get("todayObservations"):
-            context_parts.append(f"Recent Observations (count: {len(subgraph['todayObservations'])}): {json.dumps(subgraph['todayObservations'][:3], default=str)}")
-        if subgraph.get("stageRisks"):
-            context_parts.append(f"Stage Pest Risks: {subgraph['stageRisks']}")
+        plot_summary = {
+            "name": subgraph.get("plotName"),
+            "county": subgraph.get("countyName"),
+            "variety": subgraph.get("variety"),
+            "area": subgraph.get("areaHa"),
+            "stage": subgraph.get("stage"),
+            "planted": subgraph.get("plantingDate"),
+            "expectedHarvest": subgraph.get("expectedHarvestDate"),
+        }
+        context_parts.append(f"Plot Summary: {json.dumps(plot_summary, default=str)}")
+        snaps = subgraph.get("snapshots", [])
+        if snaps:
+            latest = snaps[0]
+            context_parts.append(f"Latest telemetry (date: {latest.get('date')}): temp={latest.get('temp')}C, precip={latest.get('precip')}mm, humidity={latest.get('humidity')}%")
+            if latest.get("hasSat"):
+                context_parts.append(f"Satellite: NDVI={latest.get('ndvi')}, EVI={latest.get('evi')}, cloud={latest.get('cloud')}%")
+            context_parts.append(f"Total snapshots available: {len(snaps)}")
 
     if pest_results:
         context_parts.append(f"\n=== PEST DIAGNOSIS ===")
@@ -237,12 +260,14 @@ def _check_day_one(subgraph: dict) -> bool:
     """Determine if the farmer is on day 1 with sparse data."""
     if not subgraph:
         return True
-    obs = subgraph.get("todayObservations", [])
-    return len(obs) == 0
+    snaps = subgraph.get("snapshots", [])
+    return len(snaps) == 0
 
 
-async def chat_query(farmer_id: str, message: str) -> dict:
-    plot_id = _get_plot_id(farmer_id)
+async def chat_query(farmer_id: str, message: str, context_hint: str = "") -> dict:
+    ctx = _get_plot_context(farmer_id)
+    plot_id = ctx.get("plotId")
+    season_id = ctx.get("seasonId")
 
     buffer = CONVERSATION_BUFFER.setdefault(farmer_id, [])
     buffer.append({"role": "user", "content": message})
@@ -252,7 +277,7 @@ async def chat_query(farmer_id: str, message: str) -> dict:
 
     if not plot_id:
         response = {
-            "answer": "I don't see a registered plot for your account. Please register your farm first from the home screen.",
+            "answer": "I don't see a registered plot for your account. Please register your farm first.",
             "cypher": None,
             "results": None,
             "confidence": "low",
@@ -261,7 +286,6 @@ async def chat_query(farmer_id: str, message: str) -> dict:
         return response
 
     cypher_results: list[dict] | None = None
-    cypher_was_generated = False
     generated_cypher: str | None = None
 
     # Phase 1: Classify intent + generate Cypher
@@ -274,7 +298,6 @@ async def chat_query(farmer_id: str, message: str) -> dict:
         sanitized = _sanitize_cypher(raw_cypher)
         if sanitized:
             generated_cypher = sanitized
-            cypher_was_generated = True
             try:
                 cypher_results = query(sanitized, {"plot_id": plot_id})
             except Exception:
@@ -282,66 +305,30 @@ async def chat_query(farmer_id: str, message: str) -> dict:
     else:
         cypher_results = None
 
-    # Phase 3: Extract full subgraph context
-    subgraph = await extract_subgraph(plot_id)
-
-    # Also run pest diagnosis
-    pest_results: list[dict] = []
-    try:
-        pest_results = await run_pest_diagnosis(plot_id)
-    except Exception:
-        pest_results = []
+    # Phase 3: Extract pipeline model subgraph
+    subgraph = await extract_season_subgraph(season_id) if season_id else {}
 
     # Phase 4: Synthesize answer
-    synthesis = await _synthesize_answer(
-        question=message,
-        intent=detected_intent,
-        subgraph=subgraph,
-        pest_results=pest_results,
-        cypher_results=cypher_results,
-        history=buffer[:-1] if len(buffer) > 1 else [],
-    )
+    if context_hint:
+        message = f"{context_hint}\n{message}"
+    synthesis = await _synthesize_answer(message, detected_intent, subgraph, [], cypher_results, buffer)
 
-    answer = synthesis["answer"]
-    confidence = synthesis["confidence"]
-
-    # Day 1 handling — force low confidence when no observations exist
-    if _check_day_one(subgraph):
-        day1_data = []
-        if subgraph.get("plot"):
-            p = subgraph["plot"]
-            if p.get("soilBaseline_pH"):
-                day1_data.append(f"soil pH {p['soilBaseline_pH']}")
-            if p.get("soilBaseline_N"):
-                day1_data.append(f"nitrogen {p['soilBaseline_N']} g/kg")
-            if p.get("variety"):
-                day1_data.append(f"variety: {p['variety']}")
-            if p.get("seasonDay"):
-                day1_data.append(f"day {p['seasonDay']} of season")
-        data_str = ", ".join(day1_data) if day1_data else "basic registration info"
-        answer = (
-            f"🌱 You're on day 1. We've just started monitoring your farm. "
-            f"Here's what we've collected so far: [{data_str}]. "
-            f"Satellite NDVI data takes 3-5 days to arrive. Check back soon! Once we have "
-            f"enough data, I can give you detailed recommendations about pests, growth, and yield."
+    is_day_one = _check_day_one(subgraph)
+    if is_day_one and detected_intent == "general":
+        plot_name = ctx.get("plotName", "your farm")
+        synthesis["answer"] = (
+            f"Welcome to FarmWise! I'm monitoring your {plot_name} field. "
+            f"Satellite and weather data will appear here once our systems process your location. "
+            f"This usually takes 1-2 days for satellite imagery and a few hours for weather data. "
+            f"In the meantime, you can ask me about crop diseases, potato varieties, or farming practices."
         )
-        confidence = "low"
 
-    # Combine results for response
-    all_results: list[dict] = []
-    if cypher_results:
-        all_results.extend(cypher_results)
-    if subgraph:
-        all_results.append({"subgraph": subgraph})
-
-    buffer.append({"role": "assistant", "content": answer})
-    if len(buffer) > MAX_HISTORY:
-        buffer = buffer[-MAX_HISTORY:]
-        CONVERSATION_BUFFER[farmer_id] = buffer
-
-    return {
-        "answer": answer,
+    response = {
+        "answer": synthesis["answer"],
         "cypher": generated_cypher,
-        "results": all_results if all_results else None,
-        "confidence": confidence,
+        "results": cypher_results,
+        "confidence": synthesis.get("confidence", "medium"),
     }
+    buffer.append({"role": "assistant", "content": response["answer"]})
+    return response
+

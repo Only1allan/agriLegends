@@ -3,10 +3,13 @@ Soil Baseline Agent: Fetches soil properties from iSDAsoil API
 at 30m resolution and writes to Plot node properties.
 Auth: username/password login → Bearer token (60-min TTL).
 """
+import logging
 import time
 import httpx
 from config import settings
 from services.neo4j import query
+
+logger = logging.getLogger("farmwise.soil")
 
 ISDA_BASE = "https://api.isda-africa.com"
 SOIL_PROPERTIES = ["ph", "nitrogen_total", "carbon_total", "aluminium_extractable", "carbon_organic"]
@@ -73,7 +76,8 @@ async def get_soil_baseline(lat: float, lon: float) -> dict:
             value = await fetch_property(lat, lon, prop)
             if value is not None:
                 results[prop] = value
-        except Exception:
+        except Exception as e:
+            logger.warning("iSDAsoil property %s fetch failed for (%.4f,%.4f): %s", prop, lat, lon, e)
             continue
 
     return results
